@@ -1,0 +1,88 @@
+<script>
+const express = require('express');
+const multer = require('multer');
+const fetch = require('node-fetch');
+const cheerio = require('cheerio');
+const { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel } = require("docx");
+const pdfParse = require('pdf-parse');
+
+const app = express();
+const upload = multer();
+
+
+const extractTextFromPDF = async (buffer) => {
+    try {
+        const data = await pdfParse(buffer);
+        return data.text;
+    } catch (err) {
+        console.error('Error extracting PDF text:', err);
+        return '';
+    }
+};
+
+const createDocument = () => {
+    return new Document({
+        sections: [{
+            properties: {},
+            children: [],
+        }],
+    });
+};
+
+app.post('/', upload.single('pdf'), async (req, res) => {
+    const url = req.body.url;
+    const pdfFile = req.file;
+
+    const doc = createDocument();
+    
+    if (url) {
+        try {
+            const response = await fetch(url);
+            const html = await response.text();
+            const $ = cheerio.load(html);
+
+            doc.addSection({
+                children: [
+                    new Paragraph({
+                        text: $('title').text(),
+                        heading: HeadingLevel.TITLE,
+                    }),
+                ],
+            });
+
+            $('p').each((i, elem) => {
+                const paragraph = $(elem).text();
+                doc.addSection({
+                    children: [
+                        new Paragraph(paragraph),
+                    ],
+                });
+            });
+
+        } catch (err) {
+            console.log('Error fetching website:', err);
+        }
+    }
+
+    if (pdfFile) {
+        const pdfText = await extractTextFromPDF(pdfFile.buffer);
+        doc.addSection({
+            children: [
+                new Paragraph({
+                    text: 'Extracted Text from PDF',
+                    heading: HeadingLevel.HEADING_1,
+                }),
+                new Paragraph(pdfText),
+            ],
+        });
+    }
+
+    const buffer = await Packer.toBuffer(doc);
+
+    res.set({
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': 'attachment; filename=document.docx',
+    });
+    res.send(buffer);
+});
+</script>
